@@ -50,6 +50,48 @@ app.post('/api/pacientes', verificarToken, async (req, res) => {
             peso, altura, presion_arterial, motivo_consulta, enfermedad_actual
         } = req.body;
 
+        const existente = await pool.query(
+            'SELECT id, estado FROM pacientes WHERE documento_identidad = $1',
+            [documento_identidad]
+        );
+
+        if (existente.rows.length > 0) {
+            const pacienteExistente = existente.rows[0];
+            const estadoNormalizado = String(pacienteExistente.estado ?? '').trim().toLowerCase();
+            const estaInactivo = ['inactivo', 'eliminado', 'inactive', 'deleted', 'borrado'].includes(estadoNormalizado);
+
+            if (!estaInactivo) {
+                return res.status(400).json({
+                    error: 'Este documento de identidad ya se encuentra registrado y activo en el sistema.'
+                });
+            }
+
+            // No hay is_active ni deleted_at. Un alta nueva deja estado en su default 'Sano'.
+            const pacienteRestaurado = await pool.query(
+                `UPDATE pacientes SET
+                    nombre_completo = $1,
+                    documento_identidad = $2,
+                    edad = $3,
+                    sexo = $4,
+                    telefono = $5,
+                    peso = $6,
+                    altura = $7,
+                    presion_arterial = $8,
+                    motivo_consulta = $9,
+                    enfermedad_actual = $10,
+                    estado = 'Sano'
+                WHERE id = $11
+                RETURNING *`,
+                [
+                    nombre_completo, documento_identidad, edad, sexo, telefono,
+                    peso, altura, presion_arterial, motivo_consulta, enfermedad_actual,
+                    pacienteExistente.id
+                ]
+            );
+
+            return res.json(pacienteRestaurado.rows[0]);
+        }
+
         const nuevoPaciente = await pool.query(
             `INSERT INTO pacientes (
                 nombre_completo, documento_identidad, edad, sexo, telefono,
@@ -71,8 +113,8 @@ app.delete('/api/pacientes/:id', verificarToken, async (req, res) => {
         // 1. Extraemos el ID único del paciente que viene en la URL
         const { id } = req.params; 
 
-        // 2. Ejecutamos la orden de destrucción en la base de datos de Supabase
-        const query = 'DELETE FROM pacientes WHERE id = $1 RETURNING *';
+        // 2. Borrado lógico: el expediente permanece para proteger el historial médico
+        const query = `UPDATE pacientes SET estado = 'Eliminado' WHERE id = $1 RETURNING *`;
         const result = await pool.query(query, [id]);
 
         // 3. Verificamos si el paciente realmente existía
@@ -92,7 +134,11 @@ app.delete('/api/pacientes/:id', verificarToken, async (req, res) => {
 app.get('/api/pacientes', verificarToken, async (req, res) => {
     try {
         // El recepcionista baja al sótano y pide TODOS los registros ordenados por su número
-        const todosLosPacientes = await pool.query('SELECT * FROM pacientes ORDER BY numero_historia ASC');
+        const todosLosPacientes = await pool.query(
+            `SELECT * FROM pacientes
+             WHERE estado NOT IN ('Eliminado', 'Inactivo', 'Borrado', 'eliminado', 'inactivo', 'borrado')
+             ORDER BY numero_historia ASC`
+        );
         
         // Le entrega la lista completa a React en formato JSON
         res.json(todosLosPacientes.rows);
