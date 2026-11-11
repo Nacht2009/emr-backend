@@ -58,7 +58,7 @@ app.post('/api/pacientes', verificarToken, async (req, res) => {
         if (existente.rows.length > 0) {
             const pacienteExistente = existente.rows[0];
             const estadoNormalizado = String(pacienteExistente.estado ?? '').trim().toLowerCase();
-            const estaInactivo = ['inactivo', 'eliminado', 'borrado'].includes(estadoNormalizado);
+            const estaInactivo = ['inactivo', 'eliminado', 'inactive', 'deleted', 'borrado'].includes(estadoNormalizado);
 
             if (!estaInactivo) {
                 return res.status(400).json({
